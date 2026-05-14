@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { DEMO_SHIFTS } from '@/lib/demo'
+import { DEMO_SHIFTS, DEMO_HOLIDAYS } from '@/lib/demo'
 import Header from '@/components/Header'
 
 interface ShiftRecord {
@@ -13,6 +13,7 @@ interface ShiftRecord {
   status: 'pending' | 'approved' | 'rejected'
   rejection_reason: string | null
 }
+interface Holiday { date: string; name: string; kind: 'public' | 'company' }
 
 const STATUS = {
   pending:  { label: '申請中', cls: 'badge-amber' },
@@ -36,17 +37,32 @@ export default function ShiftsPage() {
   const [viewYear, setViewYear] = useState(new Date().getFullYear())
   const [viewMonth, setViewMonth] = useState(new Date().getMonth() + 1)
   const [tab, setTab] = useState<'request' | 'calendar'>('request')
+  const [holidays, setHolidays] = useState<Holiday[]>([])
   const supabase = createClient()
 
   const fetchShifts = useCallback(async () => {
-    if (isDemoMode()) { setDemoMode(true); setShifts(DEMO_SHIFTS as ShiftRecord[]); return }
+    if (isDemoMode()) {
+      setDemoMode(true)
+      setShifts(DEMO_SHIFTS as ShiftRecord[])
+      setHolidays(DEMO_HOLIDAYS as Holiday[])
+      return
+    }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { data } = await supabase.from('shifts').select('*').eq('user_id', user.id).order('date', { ascending: false })
-    setShifts(data ?? [])
+    const [{ data: shiftData }, { data: holidayData }] = await Promise.all([
+      supabase.from('shifts').select('*').eq('user_id', user.id).order('date', { ascending: false }),
+      supabase.from('holidays').select('date, name, kind'),
+    ])
+    setShifts(shiftData ?? [])
+    setHolidays((holidayData ?? []) as Holiday[])
   }, [supabase])
 
   useEffect(() => { fetchShifts() }, [fetchShifts])
+
+  function getHolidayForDay(day: number) {
+    const ds = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    return holidays.find(h => h.date === ds)
+  }
 
   function validate(): string | null {
     if (!date || !startTime || !endTime) return '全ての項目を入力してください'
@@ -214,15 +230,31 @@ export default function ShiftsPage() {
                 if (!day) return <div key={i} />
                 const ds = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`
                 const shift = getShiftForDay(day)
+                const holiday = getHolidayForDay(day)
                 const isToday = ds === todayStr
                 const dow = (firstDay + day - 1) % 7
                 const isPending = shift?.status === 'pending'
+                const isHoliday = !!holiday
+                const dayColor = isToday ? 'var(--blue-text)'
+                  : isHoliday ? 'var(--red-text)'
+                  : dow === 0 ? 'var(--red-text)'
+                  : dow === 6 ? 'var(--blue-text)'
+                  : 'var(--text-primary)'
                 return (
                   <div key={i} className="min-h-[56px] p-1.5 rounded-md"
-                    style={{ background: isToday ? 'var(--blue-bg)' : shift ? (isPending ? '#fef3c7' : 'var(--green-bg)') : 'transparent', border: isToday ? '1px solid #bfdbfe' : '1px solid transparent' }}>
-                    <p className="text-xs text-center mb-1" style={{ color: isToday ? 'var(--blue-text)' : dow === 0 ? 'var(--red-text)' : dow === 6 ? 'var(--blue-text)' : 'var(--text-primary)', fontWeight: isToday ? 700 : 500 }}>
+                    style={{
+                      background: isToday ? 'var(--blue-bg)' : shift ? (isPending ? '#fef3c7' : 'var(--green-bg)') : isHoliday ? '#fff1f2' : 'transparent',
+                      border: isToday ? '1px solid #bfdbfe' : '1px solid transparent',
+                    }}
+                    title={holiday?.name}>
+                    <p className="text-xs text-center mb-0.5" style={{ color: dayColor, fontWeight: isToday ? 700 : 500 }}>
                       {day}
                     </p>
+                    {holiday && !shift && (
+                      <p className="text-[8px] text-center truncate leading-tight" style={{ color: 'var(--red-text)' }}>
+                        {holiday.name}
+                      </p>
+                    )}
                     {shift && (
                       <div className="rounded px-0.5 py-0.5 text-center" style={{ background: isPending ? '#b45309' : 'var(--green-text)' }}>
                         <p className="text-white text-[9px] font-semibold leading-tight">{shift.start_time.slice(0,5)}</p>
@@ -233,7 +265,7 @@ export default function ShiftsPage() {
                 )
               })}
             </div>
-            <div className="mt-4 flex items-center gap-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
+            <div className="mt-4 flex flex-wrap items-center gap-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
               <div className="flex items-center gap-2">
                 <div className="w-2.5 h-2.5 rounded" style={{ background: 'var(--green-text)' }} />
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>確定 ({approvedShifts.length})</span>
@@ -241,6 +273,10 @@ export default function ShiftsPage() {
               <div className="flex items-center gap-2">
                 <div className="w-2.5 h-2.5 rounded" style={{ background: '#b45309' }} />
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>申請中 ({pendingShifts.length})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded" style={{ background: '#fff1f2', border: '1px solid #fecaca' }} />
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>祝日・会社休日</span>
               </div>
             </div>
           </div>

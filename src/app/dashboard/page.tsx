@@ -188,12 +188,14 @@ export default async function DashboardPage() {
           {/* 管理メニュー */}
           <div>
             <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>管理メニュー</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {[
-                { href: '/dashboard/admin/employees', label: '従業員管理',   desc: '追加・編集・退職処理' },
-                { href: '/dashboard/admin/shifts',    label: 'シフト管理',   desc: '申請の承認・却下' },
-                { href: '/dashboard/admin/leaves',    label: '有給管理',     desc: '有給申請の承認・却下' },
-                { href: '/dashboard/admin/payslips',  label: '給料明細管理', desc: '明細作成・支払い完了' },
+                { href: '/dashboard/admin/employees', label: '従業員管理',     desc: '追加・編集・退職処理' },
+                { href: '/dashboard/admin/shifts',    label: 'シフト管理',     desc: '申請の承認・却下' },
+                { href: '/dashboard/admin/leaves',    label: '有給管理',       desc: '有給申請の承認・却下' },
+                { href: '/dashboard/admin/payslips',  label: '給料明細管理',   desc: '明細作成・支払い完了' },
+                { href: '/dashboard/admin/holidays',  label: '公休日カレンダー', desc: '祝日・会社休日の管理' },
+                { href: '/dashboard/admin/settings',  label: '会社設定',       desc: '社名・労働時間・給与計算' },
               ].map((item) => (
                 <Link key={item.href} href={item.href}
                   className="card p-5 flex flex-col gap-1.5 hover:shadow-md transition-shadow">

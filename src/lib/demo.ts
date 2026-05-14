@@ -66,6 +66,38 @@ export const DEMO_ADMIN_TODAY_ATTENDANCE = [
   { name: '鈴木 一郎', clock_in: null, clock_out: null },
 ]
 
+// 祝日カレンダー（2026年）
+export const DEMO_HOLIDAYS = [
+  { id: 'h1',  date: '2026-01-01', name: '元日',         kind: 'public' as const },
+  { id: 'h2',  date: '2026-01-12', name: '成人の日',     kind: 'public' as const },
+  { id: 'h3',  date: '2026-02-11', name: '建国記念の日', kind: 'public' as const },
+  { id: 'h4',  date: '2026-02-23', name: '天皇誕生日',   kind: 'public' as const },
+  { id: 'h5',  date: '2026-03-20', name: '春分の日',     kind: 'public' as const },
+  { id: 'h6',  date: '2026-04-29', name: '昭和の日',     kind: 'public' as const },
+  { id: 'h7',  date: '2026-05-03', name: '憲法記念日',   kind: 'public' as const },
+  { id: 'h8',  date: '2026-05-04', name: 'みどりの日',   kind: 'public' as const },
+  { id: 'h9',  date: '2026-05-05', name: 'こどもの日',   kind: 'public' as const },
+  { id: 'h10', date: '2026-05-06', name: '振替休日',     kind: 'public' as const },
+  { id: 'h11', date: '2026-07-20', name: '海の日',       kind: 'public' as const },
+  { id: 'h12', date: '2026-08-11', name: '山の日',       kind: 'public' as const },
+  { id: 'h13', date: '2026-09-21', name: '敬老の日',     kind: 'public' as const },
+  { id: 'h14', date: '2026-09-23', name: '秋分の日',     kind: 'public' as const },
+  { id: 'h15', date: '2026-10-12', name: 'スポーツの日', kind: 'public' as const },
+  { id: 'h16', date: '2026-11-03', name: '文化の日',     kind: 'public' as const },
+  { id: 'h17', date: '2026-11-23', name: '勤労感謝の日', kind: 'public' as const },
+]
+
+// 会社設定
+export const DEMO_COMPANY_SETTINGS = {
+  company_name: '株式会社デモ商事',
+  standard_work_hours: 8.0,
+  overtime_threshold_hours: 8.0,
+  payroll_cutoff_day: 31,
+  payroll_payday: 25,
+  social_insurance_rate: 0.15,
+  income_tax_rate: 0.05,
+}
+
 export const DEMO_ALL_PAYSLIPS = [
   { id: '1', year: 2026, month: 5, base_salary: 280000, commute_total: 8400, deduction: 56000, net_salary: 232400, is_paid: false, profiles: { name: '田中 太郎' } },
   { id: '2', year: 2026, month: 5, base_salary: 250000, commute_total: 6300, deduction: 50000, net_salary: 206300, is_paid: false, profiles: { name: '佐藤 花子' } },
