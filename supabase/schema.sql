@@ -105,6 +105,19 @@ create table if not exists company_settings (
 -- 初期レコードを必ず1件作る
 insert into company_settings (id) values (1) on conflict (id) do nothing;
 
+-- audit_logs (操作ログ／監査ログ)
+create table if not exists audit_logs (
+  id          uuid primary key default gen_random_uuid(),
+  entity_type text not null check (entity_type in ('shift', 'leave', 'payslip', 'attendance', 'employee', 'profile')),
+  entity_id   uuid,
+  action      text not null,                  -- created / approved / rejected / cancelled / updated / deleted / marked_paid / unmarked_paid
+  actor_id    uuid references profiles(id) on delete set null,
+  actor_name  text,                           -- 操作者名のスナップショット
+  target_name text,                           -- 対象従業員名のスナップショット
+  detail      jsonb,                          -- 任意の補足情報（却下理由・変更内容など）
+  created_at  timestamptz default now()
+);
+
 -- --------------------------------------------------------
 -- 2. インデックス（パフォーマンス）
 -- --------------------------------------------------------
@@ -116,6 +129,8 @@ create index if not exists idx_leaves_user_date     on leaves (user_id, date des
 create index if not exists idx_leaves_status        on leaves (status);
 create index if not exists idx_payslips_user        on payslips (user_id, year desc, month desc);
 create index if not exists idx_holidays_date        on holidays (date);
+create index if not exists idx_audit_logs_entity     on audit_logs (entity_type, entity_id, created_at desc);
+create index if not exists idx_audit_logs_created    on audit_logs (created_at desc);
 
 -- --------------------------------------------------------
 -- 3. ユーザー登録時に profiles を自動作成するトリガー
@@ -248,3 +263,30 @@ create policy "owner manages settings" on company_settings
   for all using (
     exists (select 1 from profiles where id = auth.uid() and role = 'owner')
   );
+
+-- audit_logs
+alter table audit_logs enable row level security;
+
+drop policy if exists "user reads own logs"   on audit_logs;
+drop policy if exists "owner reads all logs"  on audit_logs;
+drop policy if exists "anyone inserts logs"   on audit_logs;
+
+-- 自分が関与する操作（自分が操作者または対象）を読める
+create policy "user reads own logs" on audit_logs
+  for select using (
+    actor_id = auth.uid()
+    or exists (
+      select 1 from profiles p
+      where p.id = auth.uid() and p.name = target_name
+    )
+  );
+
+-- オーナーは全ログ閲覧
+create policy "owner reads all logs" on audit_logs
+  for select using (
+    exists (select 1 from profiles where id = auth.uid() and role = 'owner')
+  );
+
+-- 認証ユーザーはログを追加可能
+create policy "anyone inserts logs" on audit_logs
+  for insert with check (auth.uid() is not null);

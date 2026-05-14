@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { DEMO_LEAVES, DEMO_PROFILES } from '@/lib/demo'
+import { logAction, fetchLogs, ACTION_LABEL, type AuditLog } from '@/lib/audit'
 import Header from '@/components/Header'
 
 type LeaveKind = 'full' | 'morning' | 'afternoon'
@@ -49,7 +50,18 @@ export default function LeavesPage() {
   const [reason, setReason] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
+  const [expandedLogs, setExpandedLogs] = useState<Record<string, AuditLog[] | 'loading'>>({})
   const supabase = createClient()
+
+  async function toggleLogs(leaveId: string) {
+    if (expandedLogs[leaveId] && expandedLogs[leaveId] !== 'loading') {
+      setExpandedLogs(prev => { const c = { ...prev }; delete c[leaveId]; return c })
+      return
+    }
+    setExpandedLogs(prev => ({ ...prev, [leaveId]: 'loading' }))
+    const logs = await fetchLogs(supabase, { entityType: 'leave', entityId: leaveId })
+    setExpandedLogs(prev => ({ ...prev, [leaveId]: logs }))
+  }
 
   const fetchData = useCallback(async () => {
     if (isDemoMode()) {
@@ -100,24 +112,31 @@ export default function LeavesPage() {
         status: 'pending', rejection_reason: null,
       }
       setLeaves(prev => [newLeave, ...prev].sort((a, b) => b.date.localeCompare(a.date)))
+      await logAction(supabase, { entityType: 'leave', entityId: newLeave.id, action: 'created', detail: { date, kind, reason: reason.trim() || null } })
       setMessage({ text: '有給申請を提出しました！', type: 'success' })
       setDate(''); setReason(''); setKind('full'); setLoading(false); return
     }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { error } = await supabase.from('leaves').insert({ user_id: user.id, date, kind, reason: reason.trim() || null })
+    const { data: inserted, error } = await supabase.from('leaves').insert({ user_id: user.id, date, kind, reason: reason.trim() || null }).select().single()
     if (error) { setMessage({ text: 'エラーが発生しました', type: 'error' }) }
-    else { setMessage({ text: '有給申請を提出しました！', type: 'success' }); setDate(''); setReason(''); setKind('full'); await fetchData() }
+    else {
+      await logAction(supabase, { entityType: 'leave', entityId: (inserted as { id: string }).id, action: 'created', detail: { date, kind, reason: reason.trim() || null } })
+      setMessage({ text: '有給申請を提出しました！', type: 'success' }); setDate(''); setReason(''); setKind('full'); await fetchData()
+    }
     setLoading(false)
   }
 
   async function cancelLeave(id: string) {
     if (!confirm('この申請を取り消しますか？')) return
+    const target = leaves.find(l => l.id === id)
     if (demoMode) {
       setLeaves(prev => prev.filter(l => l.id !== id))
+      await logAction(supabase, { entityType: 'leave', entityId: id, action: 'cancelled', detail: target ? { date: target.date } : null })
       setMessage({ text: '申請を取り消しました', type: 'success' })
       return
     }
+    await logAction(supabase, { entityType: 'leave', entityId: id, action: 'cancelled', detail: target ? { date: target.date } : null })
     await supabase.from('leaves').delete().eq('id', id)
     setMessage({ text: '申請を取り消しました', type: 'success' })
     await fetchData()
@@ -210,25 +229,56 @@ export default function LeavesPage() {
             <div className="card overflow-hidden">
               {leaves.map((l, i) => {
                 const st = STATUS[l.status]
+                const logs = expandedLogs[l.id]
                 return (
-                  <div key={l.id} className="flex items-center gap-3 px-4 md:px-6 py-4 table-row" style={{ borderBottom: i < leaves.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                          {new Date(l.date).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}
-                        </p>
-                        <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'var(--border-light)', color: 'var(--text-secondary)' }}>
-                          {KIND_LABEL[l.kind]}
-                        </span>
+                  <div key={l.id} style={{ borderBottom: i < leaves.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
+                    <div className="flex items-center gap-3 px-4 md:px-6 py-4 table-row">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                            {new Date(l.date).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}
+                          </p>
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'var(--border-light)', color: 'var(--text-secondary)' }}>
+                            {KIND_LABEL[l.kind]}
+                          </span>
+                        </div>
+                        {l.reason && <p className="text-xs mt-1 truncate" style={{ color: 'var(--text-secondary)' }}>{l.reason}</p>}
+                        {l.status === 'rejected' && l.rejection_reason && (
+                          <p className="text-xs mt-1" style={{ color: 'var(--red-text)' }}>却下理由: {l.rejection_reason}</p>
+                        )}
                       </div>
-                      {l.reason && <p className="text-xs mt-1 truncate" style={{ color: 'var(--text-secondary)' }}>{l.reason}</p>}
-                      {l.status === 'rejected' && l.rejection_reason && (
-                        <p className="text-xs mt-1" style={{ color: 'var(--red-text)' }}>却下理由: {l.rejection_reason}</p>
+                      <span className={`badge ${st.cls} flex-shrink-0`}>{st.label}</span>
+                      <button onClick={() => toggleLogs(l.id)} className="text-xs font-medium px-2 py-1 rounded-md flex-shrink-0" style={{ color: 'var(--text-secondary)', background: 'var(--border-light)' }}>
+                        {logs ? '閉じる' : '履歴'}
+                      </button>
+                      {l.status === 'pending' && (
+                        <button onClick={() => cancelLeave(l.id)} className="text-xs font-medium px-2 py-1 rounded-md flex-shrink-0" style={{ color: 'var(--red-text)', background: 'var(--red-bg)' }}>取消</button>
                       )}
                     </div>
-                    <span className={`badge ${st.cls} flex-shrink-0`}>{st.label}</span>
-                    {l.status === 'pending' && (
-                      <button onClick={() => cancelLeave(l.id)} className="text-xs font-medium px-2 py-1 rounded-md flex-shrink-0" style={{ color: 'var(--red-text)', background: 'var(--red-bg)' }}>取消</button>
+                    {logs && (
+                      <div className="px-4 md:px-6 py-3 space-y-1.5" style={{ background: 'var(--bg)', borderTop: '1px solid var(--border-light)' }}>
+                        {logs === 'loading' ? (
+                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>読み込み中...</p>
+                        ) : logs.length === 0 ? (
+                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>履歴がありません</p>
+                        ) : (
+                          logs.map(le => (
+                            <div key={le.id} className="flex items-start gap-2 text-xs">
+                              <span className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ background: le.action === 'approved' ? 'var(--green-text)' : le.action === 'rejected' ? 'var(--red-text)' : le.action === 'cancelled' ? '#999' : 'var(--text-muted)' }} />
+                              <div className="flex-1">
+                                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{ACTION_LABEL[le.action]}</span>
+                                <span className="ml-2" style={{ color: 'var(--text-muted)' }}>{le.actor_name}</span>
+                                {le.detail && (le.detail as { rejection_reason?: string }).rejection_reason && (
+                                  <span className="ml-2" style={{ color: 'var(--red-text)' }}>— {(le.detail as { rejection_reason?: string }).rejection_reason}</span>
+                                )}
+                              </div>
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                {new Date(le.created_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     )}
                   </div>
                 )

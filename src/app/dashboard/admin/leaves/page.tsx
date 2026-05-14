@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { DEMO_ALL_LEAVES, DEMO_ALL_EMPLOYEES } from '@/lib/demo'
+import { logAction } from '@/lib/audit'
 import Header from '@/components/Header'
 
 type LeaveKind = 'full' | 'morning' | 'afternoon'
@@ -80,10 +81,12 @@ export default function AdminLeavesPage() {
     }
     if (demoMode) {
       setLeaves(prev => prev.map(x => x.id === l.id ? { ...x, status: 'approved' as const, rejection_reason: null } : x))
+      await logAction(supabase, { entityType: 'leave', entityId: l.id, action: 'approved', targetName: name ?? null, detail: { date: l.date, kind: l.kind } })
       return
     }
     setLoading(l.id)
     await supabase.from('leaves').update({ status: 'approved', rejection_reason: null }).eq('id', l.id)
+    await logAction(supabase, { entityType: 'leave', entityId: l.id, action: 'approved', targetName: name ?? null, detail: { date: l.date, kind: l.kind } })
     await fetchLeaves()
     setLoading(null)
   }
@@ -91,12 +94,15 @@ export default function AdminLeavesPage() {
   async function reject(l: LeaveWithUser) {
     const reason = window.prompt('却下理由を入力してください（任意）')
     if (reason === null) return
+    const name = l.profiles?.name
     if (demoMode) {
       setLeaves(prev => prev.map(x => x.id === l.id ? { ...x, status: 'rejected' as const, rejection_reason: reason || null } : x))
+      await logAction(supabase, { entityType: 'leave', entityId: l.id, action: 'rejected', targetName: name ?? null, detail: { rejection_reason: reason || null, date: l.date, kind: l.kind } })
       return
     }
     setLoading(l.id)
     await supabase.from('leaves').update({ status: 'rejected', rejection_reason: reason || null }).eq('id', l.id)
+    await logAction(supabase, { entityType: 'leave', entityId: l.id, action: 'rejected', targetName: name ?? null, detail: { rejection_reason: reason || null, date: l.date, kind: l.kind } })
     await fetchLeaves()
     setLoading(null)
   }

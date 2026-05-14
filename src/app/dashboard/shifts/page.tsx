@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { DEMO_SHIFTS, DEMO_HOLIDAYS } from '@/lib/demo'
+import { logAction, fetchLogs, ACTION_LABEL, type AuditLog } from '@/lib/audit'
 import Header from '@/components/Header'
 
 interface ShiftRecord {
@@ -38,7 +39,18 @@ export default function ShiftsPage() {
   const [viewMonth, setViewMonth] = useState(new Date().getMonth() + 1)
   const [tab, setTab] = useState<'request' | 'calendar'>('request')
   const [holidays, setHolidays] = useState<Holiday[]>([])
+  const [expandedLogs, setExpandedLogs] = useState<Record<string, AuditLog[] | 'loading'>>({})
   const supabase = createClient()
+
+  async function toggleLogs(shiftId: string) {
+    if (expandedLogs[shiftId] && expandedLogs[shiftId] !== 'loading') {
+      setExpandedLogs(prev => { const c = { ...prev }; delete c[shiftId]; return c })
+      return
+    }
+    setExpandedLogs(prev => ({ ...prev, [shiftId]: 'loading' }))
+    const logs = await fetchLogs(supabase, { entityType: 'shift', entityId: shiftId })
+    setExpandedLogs(prev => ({ ...prev, [shiftId]: logs }))
+  }
 
   const fetchShifts = useCallback(async () => {
     if (isDemoMode()) {
@@ -85,24 +97,31 @@ export default function ShiftsPage() {
         status: 'pending', rejection_reason: null,
       }
       setShifts(prev => [newShift, ...prev].sort((a, b) => b.date.localeCompare(a.date)))
+      await logAction(supabase, { entityType: 'shift', entityId: newShift.id, action: 'created', detail: { date, start_time: startTime, end_time: endTime } })
       setMessage({ text: 'シフトを申請しました！承認をお待ちください', type: 'success' })
       setDate(''); setStartTime(''); setEndTime(''); setLoading(false); return
     }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { error } = await supabase.from('shifts').insert({ user_id: user.id, date, start_time: startTime, end_time: endTime })
+    const { data: inserted, error } = await supabase.from('shifts').insert({ user_id: user.id, date, start_time: startTime, end_time: endTime }).select().single()
     if (error) { setMessage({ text: 'エラーが発生しました', type: 'error' }) }
-    else { setMessage({ text: 'シフトを申請しました！承認をお待ちください', type: 'success' }); setDate(''); setStartTime(''); setEndTime(''); await fetchShifts() }
+    else {
+      await logAction(supabase, { entityType: 'shift', entityId: (inserted as { id: string }).id, action: 'created', detail: { date, start_time: startTime, end_time: endTime } })
+      setMessage({ text: 'シフトを申請しました！承認をお待ちください', type: 'success' }); setDate(''); setStartTime(''); setEndTime(''); await fetchShifts()
+    }
     setLoading(false)
   }
 
   async function cancelShift(id: string) {
     if (!confirm('この申請を取り消しますか？')) return
+    const target = shifts.find(s => s.id === id)
     if (demoMode) {
       setShifts(prev => prev.filter(s => s.id !== id))
+      await logAction(supabase, { entityType: 'shift', entityId: id, action: 'cancelled', detail: target ? { date: target.date } : null })
       setMessage({ text: '申請を取り消しました', type: 'success' })
       return
     }
+    await logAction(supabase, { entityType: 'shift', entityId: id, action: 'cancelled', detail: target ? { date: target.date } : null })
     await supabase.from('shifts').delete().eq('id', id)
     setMessage({ text: '申請を取り消しました', type: 'success' })
     await fetchShifts()
@@ -183,20 +202,51 @@ export default function ShiftsPage() {
                 <div className="card overflow-hidden">
                   {shifts.map((s, i) => {
                     const st = STATUS[s.status]
+                    const logs = expandedLogs[s.id]
                     return (
-                      <div key={s.id} className="flex items-center gap-3 px-4 md:px-6 py-4 table-row" style={{ borderBottom: i < shifts.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                            {new Date(s.date).toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' })}
-                          </p>
-                          <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>{s.start_time.slice(0,5)} 〜 {s.end_time.slice(0,5)}</p>
-                          {s.status === 'rejected' && s.rejection_reason && (
-                            <p className="text-xs mt-1" style={{ color: 'var(--red-text)' }}>却下理由: {s.rejection_reason}</p>
+                      <div key={s.id} style={{ borderBottom: i < shifts.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
+                        <div className="flex items-center gap-3 px-4 md:px-6 py-4 table-row">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                              {new Date(s.date).toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' })}
+                            </p>
+                            <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>{s.start_time.slice(0,5)} 〜 {s.end_time.slice(0,5)}</p>
+                            {s.status === 'rejected' && s.rejection_reason && (
+                              <p className="text-xs mt-1" style={{ color: 'var(--red-text)' }}>却下理由: {s.rejection_reason}</p>
+                            )}
+                          </div>
+                          <span className={`badge ${st.cls} flex-shrink-0`}>{st.label}</span>
+                          <button onClick={() => toggleLogs(s.id)} className="text-xs font-medium px-2 py-1 rounded-md flex-shrink-0" style={{ color: 'var(--text-secondary)', background: 'var(--border-light)' }}>
+                            {logs ? '閉じる' : '履歴'}
+                          </button>
+                          {s.status === 'pending' && (
+                            <button onClick={() => cancelShift(s.id)} className="text-xs font-medium px-2 py-1 rounded-md flex-shrink-0" style={{ color: 'var(--red-text)', background: 'var(--red-bg)' }}>取消</button>
                           )}
                         </div>
-                        <span className={`badge ${st.cls} flex-shrink-0`}>{st.label}</span>
-                        {s.status === 'pending' && (
-                          <button onClick={() => cancelShift(s.id)} className="text-xs font-medium px-2 py-1 rounded-md flex-shrink-0" style={{ color: 'var(--red-text)', background: 'var(--red-bg)' }}>取消</button>
+                        {logs && (
+                          <div className="px-4 md:px-6 py-3 space-y-1.5" style={{ background: 'var(--bg)', borderTop: '1px solid var(--border-light)' }}>
+                            {logs === 'loading' ? (
+                              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>読み込み中...</p>
+                            ) : logs.length === 0 ? (
+                              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>履歴がありません</p>
+                            ) : (
+                              logs.map(l => (
+                                <div key={l.id} className="flex items-start gap-2 text-xs">
+                                  <span className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ background: l.action === 'approved' ? 'var(--green-text)' : l.action === 'rejected' ? 'var(--red-text)' : l.action === 'cancelled' ? '#999' : 'var(--text-muted)' }} />
+                                  <div className="flex-1">
+                                    <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{ACTION_LABEL[l.action]}</span>
+                                    <span className="ml-2" style={{ color: 'var(--text-muted)' }}>{l.actor_name}</span>
+                                    {l.detail && (l.detail as { rejection_reason?: string }).rejection_reason && (
+                                      <span className="ml-2" style={{ color: 'var(--red-text)' }}>— {(l.detail as { rejection_reason?: string }).rejection_reason}</span>
+                                    )}
+                                  </div>
+                                  <span style={{ color: 'var(--text-muted)' }}>
+                                    {new Date(l.created_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                              ))
+                            )}
+                          </div>
                         )}
                       </div>
                     )

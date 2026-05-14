@@ -195,6 +195,7 @@ export default async function DashboardPage() {
                 { href: '/dashboard/admin/leaves',    label: '有給管理',       desc: '有給申請の承認・却下' },
                 { href: '/dashboard/admin/payslips',  label: '給料明細管理',   desc: '明細作成・支払い完了' },
                 { href: '/dashboard/admin/holidays',  label: '公休日カレンダー', desc: '祝日・会社休日の管理' },
+                { href: '/dashboard/admin/logs',      label: '操作ログ',       desc: '申請・承認・編集の履歴' },
                 { href: '/dashboard/admin/settings',  label: '会社設定',       desc: '社名・労働時間・給与計算' },
               ].map((item) => (
                 <Link key={item.href} href={item.href}

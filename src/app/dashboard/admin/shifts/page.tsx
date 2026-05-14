@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { DEMO_ALL_SHIFTS, DEMO_ALL_EMPLOYEES } from '@/lib/demo'
+import { logAction } from '@/lib/audit'
 import Header from '@/components/Header'
 
 interface ShiftWithUser {
@@ -55,12 +56,16 @@ export default function AdminShiftsPage() {
   useEffect(() => { fetchShifts() }, [fetchShifts])
 
   async function approve(id: string) {
+    const target = shifts.find(s => s.id === id)
+    const targetName = target?.profiles?.name ?? null
     if (demoMode) {
       setShifts(prev => prev.map(s => s.id === id ? { ...s, status: 'approved' as const, rejection_reason: null } : s))
+      await logAction(supabase, { entityType: 'shift', entityId: id, action: 'approved', targetName, detail: target ? { date: target.date } : null })
       return
     }
     setLoading(id)
     await supabase.from('shifts').update({ status: 'approved', rejection_reason: null }).eq('id', id)
+    await logAction(supabase, { entityType: 'shift', entityId: id, action: 'approved', targetName, detail: target ? { date: target.date } : null })
     await fetchShifts()
     setLoading(null)
   }
@@ -68,25 +73,32 @@ export default function AdminShiftsPage() {
   async function reject(id: string) {
     const reason = window.prompt('却下理由を入力してください（任意）')
     if (reason === null) return
+    const target = shifts.find(s => s.id === id)
+    const targetName = target?.profiles?.name ?? null
     if (demoMode) {
       setShifts(prev => prev.map(s => s.id === id ? { ...s, status: 'rejected' as const, rejection_reason: reason || null } : s))
+      await logAction(supabase, { entityType: 'shift', entityId: id, action: 'rejected', targetName, detail: { rejection_reason: reason || null, date: target?.date } })
       return
     }
     setLoading(id)
     await supabase.from('shifts').update({ status: 'rejected', rejection_reason: reason || null }).eq('id', id)
+    await logAction(supabase, { entityType: 'shift', entityId: id, action: 'rejected', targetName, detail: { rejection_reason: reason || null, date: target?.date } })
     await fetchShifts()
     setLoading(null)
   }
 
   async function bulkApprove() {
-    const pendingIds = filtered.filter(s => s.status === 'pending').map(s => s.id)
-    if (pendingIds.length === 0) return
-    if (!confirm(`表示中の申請中 ${pendingIds.length}件 をまとめて承認しますか？`)) return
+    const pending = filtered.filter(s => s.status === 'pending')
+    if (pending.length === 0) return
+    if (!confirm(`表示中の申請中 ${pending.length}件 をまとめて承認しますか？`)) return
+    const pendingIds = pending.map(s => s.id)
     if (demoMode) {
       setShifts(prev => prev.map(s => pendingIds.includes(s.id) ? { ...s, status: 'approved' as const, rejection_reason: null } : s))
+      await Promise.all(pending.map(s => logAction(supabase, { entityType: 'shift', entityId: s.id, action: 'approved', targetName: s.profiles?.name ?? null, detail: { date: s.date } })))
       return
     }
     await supabase.from('shifts').update({ status: 'approved', rejection_reason: null }).in('id', pendingIds)
+    await Promise.all(pending.map(s => logAction(supabase, { entityType: 'shift', entityId: s.id, action: 'approved', targetName: s.profiles?.name ?? null, detail: { date: s.date } })))
     await fetchShifts()
   }
 
