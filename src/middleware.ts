@@ -3,6 +3,11 @@ import { NextResponse, type NextRequest } from 'next/server'
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
+  // デモログインAPI は無条件で通す（クッキー設定処理のため）
+  if (pathname.startsWith('/api/demo')) {
+    return NextResponse.next()
+  }
+
   // デモモード: demo_role クッキーがあれば認証済みとして扱う
   const demoRole = request.cookies.get('demo_role')?.value
   if (demoRole) {
