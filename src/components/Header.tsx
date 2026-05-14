@@ -11,12 +11,21 @@ export default function Header({ title, subtitle, action }: HeaderProps) {
   })
 
   return (
-    <div className="px-4 md:px-8 pt-6 md:pt-8 pb-5">
+    <div className="px-4 md:px-10 pt-7 md:pt-10 pb-6 md:pb-8">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>{dateStr}</p>
-          <h1 className="text-xl md:text-2xl font-bold tracking-tight truncate" style={{ color: 'var(--text-primary)' }}>{title}</h1>
-          {subtitle && <p className="text-sm mt-0.5" style={{ color: 'var(--text-secondary)' }}>{subtitle}</p>}
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-1 h-1 rounded-full" style={{ background: 'var(--text-muted)' }} />
+            <p className="text-[11px] font-medium tracking-wider uppercase" style={{ color: 'var(--text-muted)' }}>
+              {dateStr}
+            </p>
+          </div>
+          <h1 className="text-2xl md:text-[28px] font-display font-bold tracking-tight leading-tight" style={{ color: 'var(--text-primary)' }}>
+            {title}
+          </h1>
+          {subtitle && (
+            <p className="text-sm mt-1.5" style={{ color: 'var(--text-secondary)' }}>{subtitle}</p>
+          )}
         </div>
         {action && <div className="flex-shrink-0">{action}</div>}
       </div>
