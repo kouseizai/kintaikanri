@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { DEMO_COMMUTE } from '@/lib/demo'
+import { logAction } from '@/lib/audit'
 import Header from '@/components/Header'
 
 interface CommuteRecord { id: string; route: string; amount: number; created_at: string }
@@ -40,19 +41,29 @@ export default function CommutePage() {
         created_at: new Date().toISOString(),
       }
       setRecords(prev => [newRecord, ...prev])
+      await logAction(supabase, { entityType: 'employee', entityId: newRecord.id, action: 'created', detail: { type: 'commute', route: newRecord.route, amount: newRecord.amount } })
       setMessage({ text: '交通費を登録しました', type: 'success' })
       setRoute(''); setAmount(''); setLoading(false); return
     }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { error } = await supabase.from('commute').insert({ user_id: user.id, route: route.trim(), amount: parseInt(amount, 10) })
+    const { data: inserted, error } = await supabase.from('commute').insert({ user_id: user.id, route: route.trim(), amount: parseInt(amount, 10) }).select().single()
     if (error) { setMessage({ text: 'エラーが発生しました', type: 'error' }) }
-    else { setMessage({ text: '交通費を登録しました', type: 'success' }); setRoute(''); setAmount(''); await fetchRecords() }
+    else {
+      await logAction(supabase, { entityType: 'employee', entityId: (inserted as { id: string }).id, action: 'created', detail: { type: 'commute', route: route.trim(), amount: parseInt(amount, 10) } })
+      setMessage({ text: '交通費を登録しました', type: 'success' }); setRoute(''); setAmount(''); await fetchRecords()
+    }
     setLoading(false)
   }
 
   async function handleDelete(id: string) {
-    if (demoMode) { setRecords(prev => prev.filter(r => r.id !== id)); return }
+    const target = records.find(r => r.id === id)
+    if (demoMode) {
+      setRecords(prev => prev.filter(r => r.id !== id))
+      await logAction(supabase, { entityType: 'employee', entityId: id, action: 'deleted', detail: target ? { type: 'commute', route: target.route, amount: target.amount } : null })
+      return
+    }
+    await logAction(supabase, { entityType: 'employee', entityId: id, action: 'deleted', detail: target ? { type: 'commute', route: target.route, amount: target.amount } : null })
     await supabase.from('commute').delete().eq('id', id)
     await fetchRecords()
   }
