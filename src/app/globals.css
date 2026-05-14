@@ -1,101 +1,151 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f2f2f7;
-  --foreground: #1c1c1e;
-  --ios-blue: #007aff;
-  --ios-green: #34c759;
-  --ios-orange: #ff9500;
-  --ios-red: #ff3b30;
-  --ios-purple: #af52de;
-  --ios-indigo: #5856d6;
-  --card-bg: #ffffff;
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --sidebar: #141414;
+  --text-primary: #111827;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+  --border: #e5e7eb;
+  --border-light: #f3f4f6;
+  --accent: #111827;
+  --green-bg: #f0fdf4;
+  --green-text: #15803d;
+  --amber-bg: #fffbeb;
+  --amber-text: #92400e;
+  --red-bg: #fef2f2;
+  --red-text: #991b1b;
+  --blue-bg: #eff6ff;
+  --blue-text: #1e40af;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--bg);
+  --color-foreground: var(--text-primary);
   --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+* {
+  box-sizing: border-box;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(0,0,0,0.15);
-  border-radius: 3px;
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
-/* Smooth transitions */
-* {
-  transition-property: background-color, border-color, color, opacity, box-shadow, transform;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 150ms;
+/* ボトムナビ分の余白 — safe-area-inset-bottom 対応 */
+.pb-nav {
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
 }
 
-/* iOS-style input */
-.ios-input {
-  background: rgba(118, 118, 128, 0.12);
-  border: none;
-  border-radius: 10px;
-  padding: 12px 16px;
-  font-size: 16px;
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 2px; }
+
+.field-input {
   width: 100%;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 14px;
+  /* iOS Safari は font-size < 16px のインプットを自動ズームするため 16px に固定 */
+  font-size: 16px;
+  color: #111827;
   outline: none;
-  color: #1c1c1e;
+  transition: border-color 0.15s;
+}
+.field-input:focus {
+  border-color: #111827;
+  box-shadow: 0 0 0 3px rgba(17,24,39,0.06);
+}
+.field-input::placeholder { color: #9ca3af; }
+
+.btn-primary {
+  background: #111827;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.btn-primary:hover { background: #1f2937; }
+.btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+
+.btn-secondary {
+  background: #ffffff;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 9px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn-secondary:hover { background: #f9fafb; border-color: #d1d5db; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+.badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.7;
+}
+.badge-green  { background: var(--green-bg);  color: var(--green-text); }
+.badge-amber  { background: var(--amber-bg);  color: var(--amber-text); }
+.badge-red    { background: var(--red-bg);    color: var(--red-text); }
+.badge-blue   { background: var(--blue-bg);   color: var(--blue-text); }
+.badge-gray   { background: #f3f4f6;          color: #6b7280; }
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
 }
 
-.ios-input:focus {
-  background: rgba(118, 118, 128, 0.18);
-  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.2);
+.stat-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 24px;
 }
 
-/* Card hover */
-.card-hover:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+.table-row {
+  transition: background 0.1s;
 }
+.table-row:hover { background: #fafafa; }
 
-/* Gradient backgrounds for stat cards */
-.gradient-blue {
-  background: linear-gradient(135deg, #007aff 0%, #5856d6 100%);
+.tab-active {
+  background: #111827;
+  color: #ffffff;
+  border-radius: 6px;
 }
-
-.gradient-green {
-  background: linear-gradient(135deg, #34c759 0%, #30d158 100%);
+.tab-inactive {
+  color: #6b7280;
+  border-radius: 6px;
 }
-
-.gradient-orange {
-  background: linear-gradient(135deg, #ff9500 0%, #ff6b00 100%);
-}
-
-.gradient-red {
-  background: linear-gradient(135deg, #ff3b30 0%, #ff2d55 100%);
-}
-
-.gradient-purple {
-  background: linear-gradient(135deg, #af52de 0%, #5856d6 100%);
-}
-
-/* Pulse animation for clock-in button */
-@keyframes pulse-ring {
-  0% { transform: scale(1); opacity: 0.8; }
-  50% { transform: scale(1.05); opacity: 0.6; }
-  100% { transform: scale(1); opacity: 0.8; }
-}
-
-.pulse-active {
-  animation: pulse-ring 2s ease-in-out infinite;
-}
+.tab-inactive:hover { background: #f3f4f6; color: #374151; }

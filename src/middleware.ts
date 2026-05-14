@@ -1,33 +1,53 @@
-import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  // デモモード: demo_role クッキーがあれば認証済みとして扱う
+  const demoRole = request.cookies.get('demo_role')?.value
+  if (demoRole) {
+    if (pathname === '/login') {
+      const url = request.nextUrl.clone()
+      url.pathname = '/dashboard'
+      return NextResponse.redirect(url)
+    }
+    return NextResponse.next()
+  }
+
+  // Supabase接続済みの場合のみ本認証チェック
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const isPlaceholder = !supabaseUrl || supabaseUrl.includes('placeholder')
+
+  if (isPlaceholder) {
+    // 未接続時はデモログイン画面のみ許可
+    if (pathname !== '/login' && !pathname.startsWith('/api/demo')) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/login'
+      return NextResponse.redirect(url)
+    }
+    return NextResponse.next()
+  }
+
+  // 本番: Supabase認証チェック
+  const { createServerClient } = await import('@supabase/ssr')
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    supabaseUrl!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
+        getAll() { return request.cookies.getAll() },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
           supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
+          cookiesToSet.forEach(({ name, value, options }) => supabaseResponse.cookies.set(name, value, options))
         },
       },
     }
   )
 
   const { data: { user } } = await supabase.auth.getUser()
-
-  const { pathname } = request.nextUrl
 
   if (!user && pathname !== '/login') {
     const url = request.nextUrl.clone()

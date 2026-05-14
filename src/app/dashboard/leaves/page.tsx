@@ -2,153 +2,240 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { DEMO_LEAVES, DEMO_PROFILES } from '@/lib/demo'
 import Header from '@/components/Header'
 
+type LeaveKind = 'full' | 'morning' | 'afternoon'
 interface LeaveRecord {
   id: string
   date: string
   reason: string | null
+  kind: LeaveKind
   status: 'pending' | 'approved' | 'rejected'
+  rejection_reason: string | null
 }
 
 const STATUS = {
-  pending:  { label: '審査中', bg: 'rgba(255,149,0,0.12)', color: '#ff9500' },
-  approved: { label: '承認済', bg: 'rgba(52,199,89,0.12)',  color: '#34c759' },
-  rejected: { label: '却下',   bg: 'rgba(255,59,48,0.12)', color: '#ff3b30' },
+  pending:  { label: '審査中', cls: 'badge-amber' },
+  approved: { label: '承認済', cls: 'badge-green' },
+  rejected: { label: '却下',   cls: 'badge-red' },
+}
+
+const KIND_LABEL: Record<LeaveKind, string> = {
+  full: '全日', morning: '午前半休', afternoon: '午後半休',
+}
+
+function isDemoMode() {
+  if (typeof document === 'undefined') return false
+  return document.cookie.includes('demo_role=')
+}
+
+function getDemoRole(): 'employee' | 'owner' | null {
+  if (typeof document === 'undefined') return null
+  const m = document.cookie.match(/demo_role=(employee|owner)/)
+  return m ? (m[1] as 'employee' | 'owner') : null
+}
+
+function daysConsumed(kind: LeaveKind) {
+  return kind === 'full' ? 1 : 0.5
 }
 
 export default function LeavesPage() {
+  const [demoMode, setDemoMode] = useState(false)
   const [leaves, setLeaves] = useState<LeaveRecord[]>([])
+  const [annualDays, setAnnualDays] = useState(20)
   const [date, setDate] = useState('')
+  const [kind, setKind] = useState<LeaveKind>('full')
   const [reason, setReason] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
   const supabase = createClient()
 
-  const fetchLeaves = useCallback(async () => {
+  const fetchData = useCallback(async () => {
+    if (isDemoMode()) {
+      setDemoMode(true)
+      setLeaves(DEMO_LEAVES as LeaveRecord[])
+      const role = getDemoRole() ?? 'employee'
+      setAnnualDays(DEMO_PROFILES[role].annual_leave_days)
+      return
+    }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { data } = await supabase.from('leaves').select('*').eq('user_id', user.id).order('date', { ascending: false })
-    setLeaves(data ?? [])
+    const [{ data: lv }, { data: pr }] = await Promise.all([
+      supabase.from('leaves').select('*').eq('user_id', user.id).order('date', { ascending: false }),
+      supabase.from('profiles').select('annual_leave_days').eq('id', user.id).single(),
+    ])
+    setLeaves(lv ?? [])
+    setAnnualDays(pr?.annual_leave_days ?? 20)
   }, [supabase])
 
-  useEffect(() => { fetchLeaves() }, [fetchLeaves])
+  useEffect(() => { fetchData() }, [fetchData])
+
+  const usedDays = leaves
+    .filter(l => l.status === 'approved')
+    .reduce((s, l) => s + daysConsumed(l.kind), 0)
+  const pendingDays = leaves
+    .filter(l => l.status === 'pending')
+    .reduce((s, l) => s + daysConsumed(l.kind), 0)
+  const remainingDays = annualDays - usedDays
+
+  function validate(): string | null {
+    if (!date) return '取得希望日を入力してください'
+    const todayStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+    if (date < todayStr) return '過去の日付は申請できません'
+    const dup = leaves.some(l => l.date === date && l.status !== 'rejected')
+    if (dup) return 'この日付には既に申請があります'
+    if (remainingDays - daysConsumed(kind) < 0) return '有給残日数が足りません'
+    return null
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setLoading(true)
-    setMessage(null)
+    const err = validate()
+    if (err) { setMessage({ text: err, type: 'error' }); return }
+    setLoading(true); setMessage(null)
+    if (demoMode) {
+      const newLeave: LeaveRecord = {
+        id: `demo-${Date.now()}`, date, kind, reason: reason.trim() || null,
+        status: 'pending', rejection_reason: null,
+      }
+      setLeaves(prev => [newLeave, ...prev].sort((a, b) => b.date.localeCompare(a.date)))
+      setMessage({ text: '有給申請を提出しました！', type: 'success' })
+      setDate(''); setReason(''); setKind('full'); setLoading(false); return
+    }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { error } = await supabase.from('leaves').insert({ user_id: user.id, date, reason: reason.trim() || null })
-    if (error) {
-      setMessage({ text: 'エラーが発生しました', type: 'error' })
-    } else {
-      setMessage({ text: '有給申請を提出しました！承認をお待ちください', type: 'success' })
-      setDate(''); setReason('')
-      await fetchLeaves()
-    }
+    const { error } = await supabase.from('leaves').insert({ user_id: user.id, date, kind, reason: reason.trim() || null })
+    if (error) { setMessage({ text: 'エラーが発生しました', type: 'error' }) }
+    else { setMessage({ text: '有給申請を提出しました！', type: 'success' }); setDate(''); setReason(''); setKind('full'); await fetchData() }
     setLoading(false)
   }
 
-  const approved = leaves.filter(l => l.status === 'approved').length
-  const pending = leaves.filter(l => l.status === 'pending').length
+  async function cancelLeave(id: string) {
+    if (!confirm('この申請を取り消しますか？')) return
+    if (demoMode) {
+      setLeaves(prev => prev.filter(l => l.id !== id))
+      setMessage({ text: '申請を取り消しました', type: 'success' })
+      return
+    }
+    await supabase.from('leaves').delete().eq('id', id)
+    setMessage({ text: '申請を取り消しました', type: 'success' })
+    await fetchData()
+  }
+
+  const todayStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
 
   return (
-    <div className="flex-1 overflow-y-auto" style={{ background: '#f2f2f7' }}>
-      <Header title="有給申請" subtitle="有給休暇の申請と状況確認" />
-
-      <div className="px-8 pb-10 space-y-6">
+    <div className="flex-1 overflow-y-auto" style={{ background: 'var(--bg)' }}>
+      <Header title="有給申請" subtitle="有給休暇の申請と残日数管理" />
+      <div className="px-4 md:px-8 pb-10 space-y-6">
 
         {message && (
-          <div className="rounded-2xl p-4 flex items-center gap-3" style={{ background: message.type === 'success' ? 'rgba(52,199,89,0.12)' : 'rgba(255,59,48,0.12)' }}>
-            <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-bold" style={{ background: message.type === 'success' ? '#34c759' : '#ff3b30' }}>
-              {message.type === 'success' ? '✓' : '!'}
-            </div>
-            <p className="text-sm font-semibold" style={{ color: message.type === 'success' ? '#1c7234' : '#c0392b' }}>{message.text}</p>
+          <div className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium"
+            style={{ background: message.type === 'success' ? 'var(--green-bg)' : 'var(--red-bg)', color: message.type === 'success' ? 'var(--green-text)' : 'var(--red-text)', border: `1px solid ${message.type === 'success' ? '#bbf7d0' : '#fecaca'}` }}>
+            <span>{message.type === 'success' ? '✓' : '!'}</span>
+            {message.text}
           </div>
         )}
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="bg-white rounded-2xl p-5 shadow-sm text-center">
-            <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: '#8e8e93' }}>承認済み</p>
-            <p className="text-4xl font-bold" style={{ color: '#34c759' }}>{approved}</p>
-            <p className="text-xs mt-1" style={{ color: '#8e8e93' }}>日間</p>
+        {/* 残数 大カード */}
+        <div className="rounded-xl p-6" style={{ background: '#141414' }}>
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <p className="text-xs font-medium mb-1" style={{ color: 'rgba(255,255,255,0.4)' }}>有給休暇残日数</p>
+              <p className="text-5xl font-bold text-white tabular-nums">
+                {remainingDays}
+                <span className="text-base font-normal ml-1" style={{ color: 'rgba(255,255,255,0.4)' }}>/ {annualDays} 日</span>
+              </p>
+            </div>
           </div>
-          <div className="bg-white rounded-2xl p-5 shadow-sm text-center">
-            <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: '#8e8e93' }}>審査中</p>
-            <p className="text-4xl font-bold" style={{ color: '#ff9500' }}>{pending}</p>
-            <p className="text-xs mt-1" style={{ color: '#8e8e93' }}>件</p>
+          <div className="grid grid-cols-3 gap-2 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            <div>
+              <p className="text-[10px] mb-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>付与</p>
+              <p className="text-sm font-semibold text-white tabular-nums">{annualDays} 日</p>
+            </div>
+            <div>
+              <p className="text-[10px] mb-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>消化済</p>
+              <p className="text-sm font-semibold text-white tabular-nums">{usedDays} 日</p>
+            </div>
+            <div>
+              <p className="text-[10px] mb-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>申請中</p>
+              <p className="text-sm font-semibold text-white tabular-nums">{pendingDays} 日</p>
+            </div>
           </div>
         </div>
 
-        {/* Form */}
-        <div className="bg-white rounded-3xl shadow-sm p-6">
-          <h3 className="text-lg font-bold mb-4" style={{ color: '#1c1c1e' }}>有給申請を提出</h3>
+        <div className="card p-6">
+          <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>有給申請を提出</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-semibold mb-2" style={{ color: '#3c3c43' }}>取得希望日</label>
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required className="ios-input" />
+              <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>取得希望日</label>
+              <input type="date" value={date} min={todayStr} onChange={(e) => setDate(e.target.value)} required className="field-input" />
             </div>
             <div>
-              <label className="block text-sm font-semibold mb-2" style={{ color: '#3c3c43' }}>理由（任意）</label>
-              <textarea
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                rows={3}
-                placeholder="理由を入力してください（任意）"
-                className="ios-input resize-none"
-              />
+              <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>取得区分</label>
+              <div className="grid grid-cols-3 gap-2">
+                {(['full', 'morning', 'afternoon'] as const).map(k => (
+                  <button key={k} type="button" onClick={() => setKind(k)}
+                    className="py-2.5 rounded-md text-sm font-medium transition-all"
+                    style={{
+                      background: kind === k ? '#111827' : 'var(--border-light)',
+                      color: kind === k ? '#ffffff' : 'var(--text-secondary)',
+                    }}>
+                    {KIND_LABEL[k]}
+                    <span className="block text-[10px] mt-0.5 opacity-70">
+                      {k === 'full' ? '1.0 日' : '0.5 日'}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3.5 rounded-2xl font-bold text-white shadow-sm disabled:opacity-50"
-              style={{ background: 'linear-gradient(135deg, #34c759, #30d158)' }}
-            >
+            <div>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>理由（任意）</label>
+              <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="理由を入力してください（任意）" className="field-input resize-none" />
+            </div>
+            <button type="submit" disabled={loading} className="btn-primary w-full">
               {loading ? '申請中...' : '申請する'}
             </button>
           </form>
         </div>
 
-        {/* History */}
         <div>
-          <h3 className="text-lg font-bold mb-3" style={{ color: '#1c1c1e' }}>申請履歴</h3>
-          <div className="space-y-3">
-            {leaves.length === 0 ? (
-              <div className="bg-white rounded-3xl py-16 text-center shadow-sm" style={{ color: '#8e8e93' }}>
-                <p className="text-4xl mb-3">🌿</p>
-                <p className="font-medium">申請履歴がありません</p>
-              </div>
-            ) : (
-              leaves.map((l) => {
+          <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>申請履歴</h2>
+          {leaves.length === 0 ? (
+            <div className="card py-16 text-center">
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>申請履歴がありません</p>
+            </div>
+          ) : (
+            <div className="card overflow-hidden">
+              {leaves.map((l, i) => {
                 const st = STATUS[l.status]
                 return (
-                  <div key={l.id} className="bg-white rounded-2xl p-4 shadow-sm flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: st.bg }}>
-                      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: st.color }}>
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                    </div>
+                  <div key={l.id} className="flex items-center gap-3 px-4 md:px-6 py-4 table-row" style={{ borderBottom: i < leaves.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold" style={{ color: '#1c1c1e' }}>
-                        {new Date(l.date).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}
-                      </p>
-                      {l.reason && (
-                        <p className="text-sm mt-0.5 truncate" style={{ color: '#8e8e93' }}>{l.reason}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                          {new Date(l.date).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}
+                        </p>
+                        <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'var(--border-light)', color: 'var(--text-secondary)' }}>
+                          {KIND_LABEL[l.kind]}
+                        </span>
+                      </div>
+                      {l.reason && <p className="text-xs mt-1 truncate" style={{ color: 'var(--text-secondary)' }}>{l.reason}</p>}
+                      {l.status === 'rejected' && l.rejection_reason && (
+                        <p className="text-xs mt-1" style={{ color: 'var(--red-text)' }}>却下理由: {l.rejection_reason}</p>
                       )}
                     </div>
-                    <span className="px-3 py-1 rounded-full text-xs font-bold flex-shrink-0" style={{ background: st.bg, color: st.color }}>
-                      {st.label}
-                    </span>
+                    <span className={`badge ${st.cls} flex-shrink-0`}>{st.label}</span>
+                    {l.status === 'pending' && (
+                      <button onClick={() => cancelLeave(l.id)} className="text-xs font-medium px-2 py-1 rounded-md flex-shrink-0" style={{ color: 'var(--red-text)', background: 'var(--red-bg)' }}>取消</button>
+                    )}
                   </div>
                 )
-              })
-            )}
-          </div>
+              })}
+            </div>
+          )}
         </div>
-
       </div>
     </div>
   )

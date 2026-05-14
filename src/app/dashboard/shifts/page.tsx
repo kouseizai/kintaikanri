@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { DEMO_SHIFTS } from '@/lib/demo'
 import Header from '@/components/Header'
 
 interface ShiftRecord {
@@ -10,15 +11,22 @@ interface ShiftRecord {
   start_time: string
   end_time: string
   status: 'pending' | 'approved' | 'rejected'
+  rejection_reason: string | null
 }
 
 const STATUS = {
-  pending:  { label: '申請中', bg: 'rgba(255,149,0,0.12)', color: '#ff9500' },
-  approved: { label: '確定',   bg: 'rgba(52,199,89,0.12)', color: '#34c759' },
-  rejected: { label: '却下',   bg: 'rgba(255,59,48,0.12)', color: '#ff3b30' },
+  pending:  { label: '申請中', cls: 'badge-amber' },
+  approved: { label: '確定',   cls: 'badge-green' },
+  rejected: { label: '却下',   cls: 'badge-red' },
+}
+
+function isDemoMode() {
+  if (typeof document === 'undefined') return false
+  return document.cookie.includes('demo_role=')
 }
 
 export default function ShiftsPage() {
+  const [demoMode, setDemoMode] = useState(false)
   const [shifts, setShifts] = useState<ShiftRecord[]>([])
   const [date, setDate] = useState('')
   const [startTime, setStartTime] = useState('')
@@ -31,6 +39,7 @@ export default function ShiftsPage() {
   const supabase = createClient()
 
   const fetchShifts = useCallback(async () => {
+    if (isDemoMode()) { setDemoMode(true); setShifts(DEMO_SHIFTS as ShiftRecord[]); return }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     const { data } = await supabase.from('shifts').select('*').eq('user_id', user.id).order('date', { ascending: false })
@@ -39,24 +48,52 @@ export default function ShiftsPage() {
 
   useEffect(() => { fetchShifts() }, [fetchShifts])
 
+  function validate(): string | null {
+    if (!date || !startTime || !endTime) return '全ての項目を入力してください'
+    const todayStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+    if (date < todayStr) return '過去の日付は申請できません'
+    if (startTime >= endTime) return '終了時刻は開始時刻より後にしてください'
+    const dup = shifts.some(s => s.date === date && s.status !== 'rejected')
+    if (dup) return 'この日付には既に申請があります'
+    return null
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setLoading(true)
-    setMessage(null)
+    const err = validate()
+    if (err) { setMessage({ text: err, type: 'error' }); return }
+    setLoading(true); setMessage(null)
+    if (demoMode) {
+      const newShift: ShiftRecord = {
+        id: `demo-${Date.now()}`, date, start_time: startTime, end_time: endTime,
+        status: 'pending', rejection_reason: null,
+      }
+      setShifts(prev => [newShift, ...prev].sort((a, b) => b.date.localeCompare(a.date)))
+      setMessage({ text: 'シフトを申請しました！承認をお待ちください', type: 'success' })
+      setDate(''); setStartTime(''); setEndTime(''); setLoading(false); return
+    }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     const { error } = await supabase.from('shifts').insert({ user_id: user.id, date, start_time: startTime, end_time: endTime })
-    if (error) {
-      setMessage({ text: 'エラーが発生しました', type: 'error' })
-    } else {
-      setMessage({ text: 'シフトを申請しました！承認をお待ちください', type: 'success' })
-      setDate(''); setStartTime(''); setEndTime('')
-      await fetchShifts()
-    }
+    if (error) { setMessage({ text: 'エラーが発生しました', type: 'error' }) }
+    else { setMessage({ text: 'シフトを申請しました！承認をお待ちください', type: 'success' }); setDate(''); setStartTime(''); setEndTime(''); await fetchShifts() }
     setLoading(false)
   }
 
+  async function cancelShift(id: string) {
+    if (!confirm('この申請を取り消しますか？')) return
+    if (demoMode) {
+      setShifts(prev => prev.filter(s => s.id !== id))
+      setMessage({ text: '申請を取り消しました', type: 'success' })
+      return
+    }
+    await supabase.from('shifts').delete().eq('id', id)
+    setMessage({ text: '申請を取り消しました', type: 'success' })
+    await fetchShifts()
+  }
+
   const approvedShifts = shifts.filter((s) => s.status === 'approved')
+  const pendingShifts  = shifts.filter((s) => s.status === 'pending')
 
   function getDaysInMonth(y: number, m: number) { return new Date(y, m, 0).getDate() }
   function getFirstDay(y: number, m: number) { return new Date(y, m - 1, 1).getDay() }
@@ -67,39 +104,29 @@ export default function ShiftsPage() {
 
   function getShiftForDay(day: number) {
     const ds = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    return approvedShifts.find((s) => s.date === ds)
+    return shifts.find((s) => s.date === ds && s.status !== 'rejected')
   }
 
-  const todayStr = new Date().toISOString().split('T')[0]
+  const todayStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
 
   return (
-    <div className="flex-1 overflow-y-auto" style={{ background: '#f2f2f7' }}>
+    <div className="flex-1 overflow-y-auto" style={{ background: 'var(--bg)' }}>
       <Header title="シフト" subtitle="申請と確定スケジュール" />
-
-      <div className="px-8 pb-10 space-y-6">
+      <div className="px-4 md:px-8 pb-10 space-y-6">
 
         {message && (
-          <div className="rounded-2xl p-4 flex items-center gap-3" style={{ background: message.type === 'success' ? 'rgba(52,199,89,0.12)' : 'rgba(255,59,48,0.12)' }}>
-            <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-bold" style={{ background: message.type === 'success' ? '#34c759' : '#ff3b30' }}>
-              {message.type === 'success' ? '✓' : '!'}
-            </div>
-            <p className="text-sm font-semibold" style={{ color: message.type === 'success' ? '#1c7234' : '#c0392b' }}>{message.text}</p>
+          <div className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium"
+            style={{ background: message.type === 'success' ? 'var(--green-bg)' : 'var(--red-bg)', color: message.type === 'success' ? 'var(--green-text)' : 'var(--red-text)', border: `1px solid ${message.type === 'success' ? '#bbf7d0' : '#fecaca'}` }}>
+            <span>{message.type === 'success' ? '✓' : '!'}</span>
+            {message.text}
           </div>
         )}
 
-        {/* Tabs */}
-        <div className="flex gap-2 p-1 rounded-2xl" style={{ background: 'rgba(118,118,128,0.12)' }}>
+        {/* Tab switcher */}
+        <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'var(--border-light)', width: 'fit-content' }}>
           {(['request', 'calendar'] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all"
-              style={{
-                background: tab === t ? 'white' : 'transparent',
-                color: tab === t ? '#1c1c1e' : '#8e8e93',
-                boxShadow: tab === t ? '0 1px 4px rgba(0,0,0,0.1)' : 'none',
-              }}
-            >
+            <button key={t} onClick={() => setTab(t)}
+              className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === t ? 'tab-active' : 'tab-inactive'}`}>
               {t === 'request' ? 'シフト申請' : 'カレンダー'}
             </button>
           ))}
@@ -107,158 +134,117 @@ export default function ShiftsPage() {
 
         {tab === 'request' && (
           <>
-            {/* Form */}
-            <div className="bg-white rounded-3xl shadow-sm p-6">
-              <h3 className="text-lg font-bold mb-4" style={{ color: '#1c1c1e' }}>シフトを申請</h3>
+            <div className="card p-6">
+              <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>シフトを申請</h2>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-semibold mb-2" style={{ color: '#3c3c43' }}>希望日</label>
-                  <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required className="ios-input" />
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>希望日</label>
+                  <input type="date" value={date} min={todayStr} onChange={(e) => setDate(e.target.value)} required className="field-input" />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-semibold mb-2" style={{ color: '#3c3c43' }}>開始時刻</label>
-                    <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required className="ios-input" />
+                    <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>開始時刻</label>
+                    <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required className="field-input" />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold mb-2" style={{ color: '#3c3c43' }}>終了時刻</label>
-                    <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required className="ios-input" />
+                    <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>終了時刻</label>
+                    <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required className="field-input" />
                   </div>
                 </div>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3.5 rounded-2xl font-bold text-white shadow-sm disabled:opacity-50"
-                  style={{ background: 'linear-gradient(135deg, #5856d6, #007aff)' }}
-                >
+                <button type="submit" disabled={loading} className="btn-primary w-full">
                   {loading ? '申請中...' : '申請する'}
                 </button>
               </form>
             </div>
 
-            {/* History */}
             <div>
-              <h3 className="text-lg font-bold mb-3" style={{ color: '#1c1c1e' }}>申請履歴</h3>
-              <div className="space-y-3">
-                {shifts.length === 0 ? (
-                  <div className="bg-white rounded-3xl py-16 text-center shadow-sm" style={{ color: '#8e8e93' }}>
-                    <p className="text-4xl mb-3">📅</p>
-                    <p className="font-medium">申請履歴がありません</p>
-                  </div>
-                ) : (
-                  shifts.map((s) => {
+              <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>申請履歴</h2>
+              {shifts.length === 0 ? (
+                <div className="card py-16 text-center">
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>申請履歴がありません</p>
+                </div>
+              ) : (
+                <div className="card overflow-hidden">
+                  {shifts.map((s, i) => {
                     const st = STATUS[s.status]
                     return (
-                      <div key={s.id} className="bg-white rounded-2xl p-4 shadow-sm flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: st.bg }}>
-                          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: st.color }}>
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                        </div>
-                        <div className="flex-1">
-                          <p className="font-semibold" style={{ color: '#1c1c1e' }}>
+                      <div key={s.id} className="flex items-center gap-3 px-4 md:px-6 py-4 table-row" style={{ borderBottom: i < shifts.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                             {new Date(s.date).toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' })}
                           </p>
-                          <p className="text-sm mt-0.5" style={{ color: '#8e8e93' }}>
-                            {s.start_time.slice(0,5)} 〜 {s.end_time.slice(0,5)}
-                          </p>
+                          <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>{s.start_time.slice(0,5)} 〜 {s.end_time.slice(0,5)}</p>
+                          {s.status === 'rejected' && s.rejection_reason && (
+                            <p className="text-xs mt-1" style={{ color: 'var(--red-text)' }}>却下理由: {s.rejection_reason}</p>
+                          )}
                         </div>
-                        <span className="px-3 py-1 rounded-full text-xs font-bold" style={{ background: st.bg, color: st.color }}>
-                          {st.label}
-                        </span>
+                        <span className={`badge ${st.cls} flex-shrink-0`}>{st.label}</span>
+                        {s.status === 'pending' && (
+                          <button onClick={() => cancelShift(s.id)} className="text-xs font-medium px-2 py-1 rounded-md flex-shrink-0" style={{ color: 'var(--red-text)', background: 'var(--red-bg)' }}>取消</button>
+                        )}
                       </div>
                     )
-                  })
-                )}
-              </div>
+                  })}
+                </div>
+              )}
             </div>
           </>
         )}
 
         {tab === 'calendar' && (
-          <div className="bg-white rounded-3xl shadow-sm p-6">
-            {/* Navigation */}
-            <div className="flex items-center justify-between mb-6">
-              <button
-                onClick={() => { if (viewMonth === 1) { setViewMonth(12); setViewYear(y => y - 1) } else setViewMonth(m => m - 1) }}
-                className="w-10 h-10 rounded-full flex items-center justify-center"
-                style={{ background: 'rgba(118,118,128,0.12)' }}
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: '#1c1c1e' }}>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
-                </svg>
+          <div className="card p-3 md:p-6">
+            <div className="flex items-center justify-between mb-4 md:mb-6">
+              <button onClick={() => { if (viewMonth === 1) { setViewMonth(12); setViewYear(y => y - 1) } else setViewMonth(m => m - 1) }}
+                className="w-8 h-8 rounded-md flex items-center justify-center btn-secondary p-0">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
               </button>
-              <h3 className="text-xl font-bold" style={{ color: '#1c1c1e' }}>{viewYear}年 {viewMonth}月</h3>
-              <button
-                onClick={() => { if (viewMonth === 12) { setViewMonth(1); setViewYear(y => y + 1) } else setViewMonth(m => m + 1) }}
-                className="w-10 h-10 rounded-full flex items-center justify-center"
-                style={{ background: 'rgba(118,118,128,0.12)' }}
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: '#1c1c1e' }}>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-                </svg>
+              <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{viewYear}年 {viewMonth}月</h3>
+              <button onClick={() => { if (viewMonth === 12) { setViewMonth(1); setViewYear(y => y + 1) } else setViewMonth(m => m + 1) }}
+                className="w-8 h-8 rounded-md flex items-center justify-center btn-secondary p-0">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
               </button>
             </div>
-
-            {/* Week headers */}
             <div className="grid grid-cols-7 mb-2">
               {['日', '月', '火', '水', '木', '金', '土'].map((d, i) => (
-                <div key={d} className="text-center text-xs font-bold py-2" style={{ color: i === 0 ? '#ff3b30' : i === 6 ? '#007aff' : '#8e8e93' }}>
-                  {d}
-                </div>
+                <div key={d} className="text-center text-xs font-medium py-2" style={{ color: i === 0 ? 'var(--red-text)' : i === 6 ? 'var(--blue-text)' : 'var(--text-muted)' }}>{d}</div>
               ))}
             </div>
-
-            {/* Days */}
-            <div className="grid grid-cols-7 gap-1">
+            <div className="grid grid-cols-7 gap-0.5">
               {calendarDays.map((day, i) => {
                 if (!day) return <div key={i} />
                 const ds = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`
                 const shift = getShiftForDay(day)
                 const isToday = ds === todayStr
                 const dow = (firstDay + day - 1) % 7
+                const isPending = shift?.status === 'pending'
                 return (
-                  <div
-                    key={i}
-                    className="min-h-[60px] p-1.5 rounded-xl"
-                    style={{
-                      background: isToday ? 'rgba(0,122,255,0.08)' : shift ? 'rgba(52,199,89,0.06)' : 'transparent',
-                      border: isToday ? '1.5px solid rgba(0,122,255,0.4)' : '1.5px solid transparent',
-                    }}
-                  >
-                    <p
-                      className="text-xs font-bold text-center mb-1"
-                      style={{
-                        color: isToday ? '#007aff' : dow === 0 ? '#ff3b30' : dow === 6 ? '#007aff' : '#1c1c1e',
-                      }}
-                    >
-                      {isToday ? (
-                        <span
-                          className="inline-flex items-center justify-center w-5 h-5 rounded-full text-white text-xs"
-                          style={{ background: '#007aff' }}
-                        >
-                          {day}
-                        </span>
-                      ) : day}
+                  <div key={i} className="min-h-[56px] p-1.5 rounded-md"
+                    style={{ background: isToday ? 'var(--blue-bg)' : shift ? (isPending ? '#fef3c7' : 'var(--green-bg)') : 'transparent', border: isToday ? '1px solid #bfdbfe' : '1px solid transparent' }}>
+                    <p className="text-xs text-center mb-1" style={{ color: isToday ? 'var(--blue-text)' : dow === 0 ? 'var(--red-text)' : dow === 6 ? 'var(--blue-text)' : 'var(--text-primary)', fontWeight: isToday ? 700 : 500 }}>
+                      {day}
                     </p>
                     {shift && (
-                      <div className="rounded-lg px-1 py-0.5 text-center" style={{ background: '#34c759' }}>
-                        <p className="text-white text-xs font-bold leading-tight">{shift.start_time.slice(0,5)}</p>
-                        <p className="text-white text-xs opacity-80 leading-tight">{shift.end_time.slice(0,5)}</p>
+                      <div className="rounded px-0.5 py-0.5 text-center" style={{ background: isPending ? '#b45309' : 'var(--green-text)' }}>
+                        <p className="text-white text-[9px] font-semibold leading-tight">{shift.start_time.slice(0,5)}</p>
+                        <p className="text-white text-[9px] opacity-80 leading-tight">{shift.end_time.slice(0,5)}</p>
                       </div>
                     )}
                   </div>
                 )
               })}
             </div>
-
-            <div className="mt-4 flex items-center gap-3 pt-4" style={{ borderTop: '1px solid #f2f2f7' }}>
-              <div className="w-3 h-3 rounded" style={{ background: '#34c759' }} />
-              <span className="text-xs" style={{ color: '#8e8e93' }}>確定シフト</span>
+            <div className="mt-4 flex items-center gap-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded" style={{ background: 'var(--green-text)' }} />
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>確定 ({approvedShifts.length})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded" style={{ background: '#b45309' }} />
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>申請中 ({pendingShifts.length})</span>
+              </div>
             </div>
           </div>
         )}
-
       </div>
     </div>
   )
